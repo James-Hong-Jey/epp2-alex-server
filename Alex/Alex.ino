@@ -27,7 +27,7 @@
 #define RF                  10  // Right forward pin
 #define RR                  11  // Right reverse pin
 
-#define PI                  3.141592654
+// #define PI                  3.141592654
 
 // Alex dimensions - Rough measurement, including wheels
 #define ALEX_LENGTH         17
@@ -74,6 +74,36 @@ unsigned long deltaDist;
 unsigned long newDist;
 unsigned long deltaTicks;
 unsigned long targetTicks;
+
+// Colour stuff setup
+#define s0 7       
+#define s1 8
+#define s2 9
+#define s3 12
+#define out 13
+
+int Red=0, Blue=0, Green=0;  //RGB values 
+
+#define trigerPin A0
+#define echoPin 4
+unsigned long duration;
+float distance;
+char colour;
+
+void setupColour_Ultrasonic() {
+  pinMode(trigerPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+   pinMode(s0,OUTPUT);    //pin modes
+   pinMode(s1,OUTPUT);
+   pinMode(s2,OUTPUT);
+   pinMode(s3,OUTPUT);
+   pinMode(out,INPUT);
+
+   Serial.begin(9600);   //intialize the serial monitor baud rate
+   
+   digitalWrite(s0,HIGH); //Putting S0/S1 on HIGH/HIGH levels means the output frequency scalling is at 100% (recommended)
+   digitalWrite(s1,HIGH); //LOW/LOW is off HIGH/LOW is 20% and LOW/HIGH is  2%
+}
 
 /*
  * 
@@ -532,11 +562,25 @@ void initializeState()
   clearCounters();
 }
 
+void sendColour() {
+  TPacket colourPacket;
+  colourPacket.packetType=PACKET_TYPE_RESPONSE;
+  colourPacket.command=RESP_COLOUR;
+  colourPacket.params[0] = colour;
+  colourPacket.params[1] = distance;
+  sendResponse(&colourPacket);
+}
+
 void handleCommand(TPacket *command)
 {
   switch(command->command)
   {
     // For movement commands, param[0] = distance, param[1] = speed.
+    case COMMAND_COLOUR_SENSOR:
+        colour_ultrasonic_sensor();
+        sendColour();
+        break;
+        
     case COMMAND_GET_STATS:
         sendStatus();
         break;
@@ -563,7 +607,7 @@ void handleCommand(TPacket *command)
     case COMMAND_STOP:
         sendOK();
         stop();
-        break; 
+        break;      
         
     default:
       sendBadCommand();
@@ -645,33 +689,6 @@ void handlePacket(TPacket *packet)
   }
 }
 
-#define s0 7       
-#define s1 8
-#define s2 9
-#define s3 12
-#define out 13
-
-int Red=0, Blue=0, Green=0;  //RGB values 
-
-const int trigerPin = 4;
-const int echoPin = 1;
-unsigned long duration;
-float distance;
-
-void setupColour_Ultrasonic() {
-  pinMode(trigerPin, OUTPUT);
-  pinMode(echoPin, INPUT);
-   pinMode(s0,OUTPUT);    //pin modes
-   pinMode(s1,OUTPUT);
-   pinMode(s2,OUTPUT);
-   pinMode(s3,OUTPUT);
-   pinMode(out,INPUT);
-
-   Serial.begin(9600);   //intialize the serial monitor baud rate
-   
-   digitalWrite(s0,HIGH); //Putting S0/S1 on HIGH/HIGH levels means the output frequency scalling is at 100% (recommended)
-   digitalWrite(s1,HIGH); //LOW/LOW is off HIGH/LOW is 20% and LOW/HIGH is  2%
-}
 
 void GetColors()  
 {    
@@ -688,19 +705,17 @@ void GetColors()
 }
 
 void colour_ultrasonic_sensor() {
-  TPacket colourPacket;
-  colourPacket.command = RESP_STATUS;
   GetColors();
 
-  if (Green>Red && Green<=11) 
-    colourPacket.params[0] = "Red";
-
-  else if (Red>Green && Red<=11)
-    colourPacket.params[0] = "Green";
-
-  else
-    colourPacket.params[0] = "Unknown";
-
+  if (Green>Red && Red<11) {
+    colour = 'r';
+  }
+  else if (Red>Green && Green<11) {
+    colour = 'g';
+  }
+  else{
+    colour = 'u';
+  }
   digitalWrite(trigerPin, LOW);
   delayMicroseconds(2);
   digitalWrite(trigerPin, HIGH);
@@ -709,13 +724,9 @@ void colour_ultrasonic_sensor() {
 
   duration = pulseIn(echoPin, HIGH);
   distance = (duration*0.0343)/2;
- if (distance<3);
- else
-  colourPacket.params[1] = distance;
- 
   delay(100);
 
-   sendResponse(&colourPacket);
+
 }
 
 void loop() {

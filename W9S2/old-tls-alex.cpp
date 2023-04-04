@@ -67,15 +67,6 @@ void handleMessage(TPacket *packet)
 	sendNetworkData(data, sizeof(data));
 }
 
-void handleColour(TPacket *packet) {// TBC
-  char data[65];
-  printf("COLOUR STATUS PACKET\n");
-  data[0] = NET_COLOUR_PACKET; // Not changing for now, but if need then
-  // need to change alot of netconstants files
-	memcpy(&data[1], packet->params, sizeof(packet->params));
-	sendNetworkData(data, sizeof(data));
-}
-
 void handleStatus(TPacket *packet)
 {
 	char data[65];
@@ -96,15 +87,11 @@ void handleResponse(TPacket *packet)
 			resp[0] = NET_ERROR_PACKET;
 			resp[1] = RESP_OK;
 			sendNetworkData(resp, sizeof(resp));
-      break;
+		break;
 
 		case RESP_STATUS:
 			handleStatus(packet);
-      break;
-
-    case RESP_COLOUR:
-      handleColour(packet);
-      break;
+		break;
 
 		default:
 		printf("Boo\n");
@@ -282,12 +269,6 @@ void handleCommand(void *conn, const char *buffer)
 			commandPacket.command = COMMAND_GET_STATS;
 			uartSendPacket(&commandPacket);
 			break;
-
-    case 'z':
-    case 'Z':
-      commandPacket.command = COMMAND_COLOUR_SENSOR;
-      uartSendPacket(&commandPacket);
-      break;
 
 		default:
 			printf("Bad command\n");

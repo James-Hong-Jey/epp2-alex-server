@@ -35,4 +35,5 @@
 *.tar.xz
 
 # the arduino
-./arduino-1.8.5/
+arduino-1.8.5/
+github_token.txt
