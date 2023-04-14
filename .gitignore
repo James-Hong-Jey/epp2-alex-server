@@ -36,6 +36,5 @@
 
 # the arduino
 arduino-1.8.5/
-github_token.txt
 Pi-Backup/
 *.key
