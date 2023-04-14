@@ -13,6 +13,7 @@
 // wheel encoder.
 
 #define COUNTS_PER_REV      200
+#define RIGHT_ADJUST        0.95
 
 // Wheel circumference in cm.
 // We will use this to calculate forward/backward distance traveled 
@@ -421,7 +422,7 @@ void forward(float dist, float speed)
   // This will be replaced later with bare-metal code.
   
   analogWrite(LF, val);
-  analogWrite(RF, val);
+  analogWrite(RF, pwmVal(speed * RIGHT_ADJUST));
   analogWrite(LR,0);
   analogWrite(RR, 0);
 }
@@ -447,7 +448,8 @@ void reverse(float dist, float speed)
   // RF = Right forward pin, RR = Right reverse pin
   // This will be replaced later with bare-metal code.
   analogWrite(LR, val);
-  analogWrite(RR, val);
+  //analogWrite(RR, val);
+  analogWrite(RR, pwmVal(speed * RIGHT_ADJUST));
   analogWrite(LF, 0);
   analogWrite(RF, 0);
 }
@@ -486,7 +488,7 @@ void left(float ang, float speed)
   // To turn left we reverse the left wheel and move
   // the right wheel forward.
   analogWrite(LR, val);
-  analogWrite(RF, val);
+  analogWrite(RF, pwmVal(speed*RIGHT_ADJUST));
   analogWrite(LF, 0);
   analogWrite(RR, 0);
 }
@@ -511,7 +513,7 @@ void right(float ang, float speed)
   // We will also replace this code with bare-metal later.
   // To turn right we reverse the right wheel and move
   // the left wheel forward.
-  analogWrite(RR, val);
+  analogWrite(RR, pwmVal(speed*RIGHT_ADJUST));
   analogWrite(LF, val);
   analogWrite(LR, 0);
   analogWrite(RF, 0);
@@ -566,8 +568,11 @@ void sendColour() {
   TPacket colourPacket;
   colourPacket.packetType=PACKET_TYPE_RESPONSE;
   colourPacket.command=RESP_COLOUR;
-  colourPacket.params[0] = colour;
-  colourPacket.params[1] = distance;
+  colourPacket.params[0] = Red;
+  colourPacket.params[1] = Green;
+  colourPacket.params[2] = Blue;
+  colourPacket.params[3] = colour;
+  colourPacket.params[4] = distance;
   sendResponse(&colourPacket);
 }
 
@@ -707,15 +712,21 @@ void GetColors()
 void colour_ultrasonic_sensor() {
   GetColors();
 
-  if (Green>Red && Red<11) {
-    colour = 'r';
-  }
-  else if (Red>Green && Green<11) {
+  Red = map(Red,110,1450,0,255);
+  Green = map(Green,100,1350,0,255);
+  Blue = map(Blue,75,1030,0,255);
+
+  
+  if (Red>33 && Red<43 && Green>16 && Green<26 && Blue>40 && Blue<50){ 
     colour = 'g';
+  }
+  else if (Red<10 && Green>39 && Green<55 && Blue>37 && Blue<50){
+    colour = 'r';
   }
   else{
     colour = 'u';
   }
+  
   digitalWrite(trigerPin, LOW);
   delayMicroseconds(2);
   digitalWrite(trigerPin, HIGH);
