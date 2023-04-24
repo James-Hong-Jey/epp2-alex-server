@@ -1,3 +1,198 @@
+void setupEINT() 
+{ 
+  cli(); 
+  EICRA |= 0b1010; 
+  EIMSK |= 0b11; 
+  sei(); 
+} 
+ 
+ISR(INT0_vect) 
+{ 
+  leftISR(); 
+} 
+ 
+ISR(INT1_vect) 
+{ 
+  rightISR(); 
+} 
+ 
+void setupSerial() 
+{ 
+  UBRR0H = 103; //9600 baudrate 
+  UBRR0H = 0; 
+  UCSR0C = 0b00000110; 
+  UCSR0A = 0; 
+} 
+ 
+ 
+void startSerial() 
+{ 
+  UCSR0B = 0b00011000; 
+} 
+ 
+ 
+int readSerial(char *buffer) 
+{ 
+  int count = 0; 
+  while (UCSR0A & 0b10000000) { 
+    unsigned char data = UDR0; 
+    buffer[count += 1] = data; 
+  } 
+  return count; 
+} 
+ 
+void writeSerial(const char *buffer, int len) 
+{ 
+  int count = 0; 
+  while (count < len) { 
+    while ((UCSR0A & 0b00100000) == 0); 
+    UDR0 = buffer[count]; 
+    count += 1; 
+  } 
+} 
+ 
+void setupMotors() 
+{ 
+  /* Our motor set up is: 
+        A1IN - Pin 5, PD5, OC0B 
+        A2IN - Pin 6, PD6, OC0A 
+        B1IN - Pin 10, PB2, OC1B 
+        B2In - pIN 11, PB3, OC2A        
+  */ 
+  TCNT0 = 0; // Timer 0 
+  TCNT1 = 0; // Timer 1 
+  TCNT2 = 0; // Timer 2 
+     
+  DDRD |= (LF | LR);  
+  DDRB |= (RF | RR);  
+ 
+  TCCR0A |= 0b1;  
+  OCR0A = 0; 
+  OCR0B = 0; 
+  
+  TCCR1A |= 0b1; 
+  OCR1A = 0; 
+  OCR1B = 0; 
+   
+  TCCR2A |= 0b1; 
+  OCR2A = 0; 
+  OCR2B = 0; 
+   
+} 
+ 
+// Start the PWM for Alex's motors. 
+void startMotors() 
+{ 
+  TCCR0B |= 0b11; // start Timer 0 
+  TCCR1B |= 0b11; // start Timer 1 
+  TCCR2B |= 0b100; // start Timer 2  
+} 
+ 
+// Convert percentages to PWM values 
+int pwmVal(float speed) 
+{ 
+  if (speed < 0.0) 
+    speed = 0; 
+ 
+  if (speed > 100.0) 
+    speed = 100.0; 
+ 
+  return (int) ((speed / 100.0) * 255.0); 
+} 
+ 
+void forward(float dist, float speed) 
+{ 
+  dir = FORWARD; 
+ 
+  int val = pwmVal(speed); 
+ 
+  if (dist > 0) { 
+    deltaDist = dist; 
+  } 
+  else { 
+    deltaDist = 9999999; 
+  } 
+  newDist = forwardDist + deltaDist; 
+ 
+  OCR2A = val; 
+  TCCR2A = 0b10000001; //RF 
+  OCR0A = val; 
+  TCCR0A = 0b10000001; //LF 
+} 
+ 
+void reverse(float dist, float speed) 
+{ 
+  dir = BACKWARD; 
+ 
+  int val = pwmVal(speed); 
+ 
+  if (dist > 0) { 
+    deltaDist = dist; 
+  } 
+  else { 
+    deltaDist = 9999999; 
+  } 
+  newDist = reverseDist + deltaDist; 
+  
+ 
+  OCR1B = val; 
+  TCCR1A = 0b00100001; // RR 
+  OCR0B = val; 
+  TCCR0A = 0b00100001; // LR 
+} 
+ 
+// 
+unsigned long computeDeltaTicks(float ang) { 
+  unsigned long ticks = (unsigned long)((ang * alexCirc * COUNTS_PER_REV) / (360.0 * WHEEL_CIRC)); 
+ 
+  return ticks; 
+} 
+ 
+void left(float ang, float speed) 
+{ 
+  dir = LEFT; 
+ 
+  int val = pwmVal(speed); 
+ 
+  if (ang == 0) 
+    deltaTicks = 99999999; 
+  else 
+    deltaTicks = computeDeltaTicks(ang); 
+ 
+  targetTicks = leftReverseTicksTurns + deltaTicks; 
+ 
+  OCR2A = val; 
+  TCCR2A = 0b10000001; // RF 
+  OCR0B = val; 
+  TCCR0A = 0b00100001; // LR 
+} 
+ 
+void right(float ang, float speed) 
+{ 
+  dir = RIGHT; 
+ 
+  int val = pwmVal(speed); 
+ 
+  if (ang == 0) 
+    deltaTicks = 99999999; 
+  else 
+    deltaTicks = computeDeltaTicks(ang); 
+ 
+  targetTicks = rightReverseTicksTurns + deltaTicks; 
+ 
+  OCR1B = val - 10; 
+  TCCR1A = 0b00100001; // RR 
+  OCR0A = val; 
+  TCCR0A = 0b10000001; // LF 
+} 
+ 
+void stop() 
+{ 
+  dir = STOP; 
+  TCCR0A = 0b00000001; 
+  TCCR1A = 0b00000001; 
+  TCCR2A = 0b00000001; 
+}
 #include <math.h>
 #include <serialize.h>
 #include <stdarg.h>
@@ -5,6 +200,7 @@
 #include "packet.h"
 #include "constants.h"
 
+#include "Arduino.h" //lib for bare metal
 /*
  * Alex's configuration constants
  */
@@ -23,15 +219,12 @@
 
 // Motor control pins. You need to adjust these till
 // Alex moves in the correct direction
-// #define LF                  6   // Left forward pin
-// #define LR                  5   // Left reverse pin
-// #define RF                  10  // Right forward pin
-// #define RR                  11  // Right reverse pin
+#define LF                  6   // Left forward pin
+#define LR                  5   // Left reverse pin
+#define RF                  10  // Right forward pin
+#define RR                  11  // Right reverse pin
 
-#define LF                  (1 << 6)   // Left forward pin D
-#define LR                  (1 << 5)   // Left reverse pin D
-#define RF                  (1 << 2)  // Right forward pin B
-#define RR                  (1 << 3)  // Right reverse pin B
+// #define PI                  3.141592654
 
 // Alex dimensions - Rough measurement, including wheels
 #define ALEX_LENGTH         17
@@ -79,106 +272,27 @@ unsigned long newDist;
 unsigned long deltaTicks;
 unsigned long targetTicks;
 
-// Colour stuff setup
-// #define s0 7       
-// #define s1 8
-// #define s2 9
-// #define s3 12
-// #define out 13
-#define S0 (1 << 7) // D
-#define S1 (1 << 0) // B
-#define S2 (1 << 1) // B
-#define S3 (1 << 4) // B
-#define OUT (1 << 5) // B
-// #define TRIGGER_PIN A0
-// #define ECHO_PIN 4
-#define BUZZER (1 << 1) // C
-#define TRIGGER_PIN (1 << 0) // C
-#define ECHO_PIN (1 << 3) // D
 
 int Red=0, Blue=0, Green=0;  //RGB values 
+
+#define trigerPin A0
+#define echoPin 4
 unsigned long duration;
 float distance;
 char colour;
 
 void setupColour_Ultrasonic() {
-  // pinMode(TRIGGER_PIN, OUTPUT);
-  // pinMode(ECHO_PIN, INPUT);
-  // pinMode(s0,OUTPUT);    //pin modes
-  // pinMode(s1,OUTPUT);
-  // pinMode(s2,OUTPUT);
-  // pinMode(s3,OUTPUT);
-  // pinMode(out,INPUT);
-  // Serial.begin(9600);   //intialize the serial monitor baud rate
-  // digitalWrite(s0,HIGH); //Putting S0/S1 on HIGH/HIGH levels means the output frequency scalling is at 100% (recommended)
-  // digitalWrite(s1,HIGH); //LOW/LOW is off HIGH/LOW is 20% and LOW/HIGH is  2%
-
-  DDRC |= TRIGGER_PIN | BUZZER;
-  DDRD &= ~ECHO_PIN;
-  DDRD |= S0;
-  DDRB |= (S1 | S2 | S3);
-  DDRB &= ~OUT;
-
-  PORTD |= S0;
-  PORTB |= S1;
-}
-
-void GetColours()  
-{    
-  // digitalWrite(s2, LOW);                                           //S2/S3 levels define which set of photodiodes we are using LOW/LOW is for RED LOW/HIGH is for Blue and HIGH/HIGH is for green 
-  // digitalWrite(s3, LOW);                                           
-  // Red = pulseIn(out, digitalRead(out) == HIGH ? LOW : HIGH);      
-  // here we wait until "out" go LOW, we start measuring the duration and stops when "out" is HIGH again, if you have trouble with this expression check the bottom of the code
-  // delay(20);  
-  // digitalWrite(s3, HIGH);                                         //Here we select the other color (set of photodiodes) and measure the other colors value using the same techinque
-  // Blue = pulseIn(out, digitalRead(out) == HIGH ? LOW : HIGH);
-  // delay(20);  
-  // digitalWrite(s2, HIGH);  
-  // Green = pulseIn(out, digitalRead(out) == HIGH ? LOW : HIGH);
-  // delay(20);  
-  PORTD &= ~(S2 | S3); // remove S2 & S3 first
-  Red = pulseIn(OUT, (PINB & OUT) == HIGH ? LOW : HIGH);
-  // here we wait until "out" go LOW, we start measuring the duration and stops when "out" is HIGH again, if you have trouble with this expression check the bottom of the code
-  delay(20);  
-  PORTD |= S3;
-  Blue = pulseIn(OUT, (PINB & OUT) == HIGH ? LOW : HIGH);
-  delay(20);  
-  PORTD |= S2;
-  Green = pulseIn(OUT, (PINB & OUT) == HIGH ? LOW : HIGH);
-  delay(20);  
-}
-
-int ultrasonic_sensor_update() {
-  PORTC &= ~TRIGGER_PIN;
-  delayMicroseconds(2);
-  PORTC |= TRIGGER_PIN;
-  delayMicroseconds(10);
-  PORTC &= ~TRIGGER_PIN;
-
-  duration = pulseIn(ECHO_PIN, HIGH);
-  distance = (duration*0.0343)/2;
-}
-
-void colour_ultrasonic_sensor() {
-  GetColours();
-
-  Red = map(Red,110,1450,0,255);
-  Green = map(Green,100,1350,0,255);
-  Blue = map(Blue,75,1030,0,255);
-
+  DDRD &= 0b0111; //set echopin(pin 4) as input
+  DDRD |= 0b10000000; //set pin 7 as output
+  DDRB |= 0b010011; //set pin 8 9 12 as output
+  DDRB &= 0b01111;//set pin 13 as input
+  pinMode(trigerPin, OUTPUT);
+  Serial.begin(9600);   //intialize the serial monitor baud rate
   
-  if (Red>33 && Red<43 && Green>16 && Green<26 && Blue>40 && Blue<50){ 
-    colour = 'g';
-  }
-  else if (Red<10 && Green>39 && Green<55 && Blue>37 && Blue<50){
-    colour = 'r';
-  }
-  else{
-    colour = 'u';
-  }
-
-  ultrasonic_sensor_update();
-  delay(100);
+  PORTD |= 0b10000000; //write high to pin 7
+  PORTB |= 0b1; //write high to pin 8
+  //Putting pin 7 8 on HIGH/HIGH levels means the output frequency scalling is at 100% (recommended)
+  //LOW/LOW is off HIGH/LOW is 20% and LOW/HIGH is  2%
 }
 
 /*
@@ -312,12 +426,19 @@ void sendResponse(TPacket *packet)
   writeSerial(buffer, len);
 }
 
+
+/*
+ * Setup and start codes for external interrupts and 
+ * pullup resistors.
+ * 
+ */
 // Enable pull up resistors on pins 2 and 3
 void enablePullups()
 {
   // Use bare-metal to enable the pull-up resistors on pins
   // 2 and 3. These are pins PD2 and PD3 respectively.
   // We set bits 2 and 3 in DDRD to 0 to make them inputs. 
+
   DDRD |= 0 << 2;
   DDRD |= 0 << 3;
   PORTD |= 1 << 2;
@@ -361,9 +482,10 @@ void setupEINT()
   // Use bare-metal to configure pins 2 and 3 to be
   // falling edge triggered. Remember to enable
   // the INT0 and INT1 interrupts.
+
   cli();
-  EICRA |= 0b1010;
-  EIMSK |= 0b11;
+  EICRA = 0b1010;
+  EIMSK = 0b11;
   sei();
 }
 
@@ -391,49 +513,45 @@ ISR(INT1_vect){
 // with bare-metal code.
 void setupSerial()
 {
-  // Serial.begin(9600);
-  UBRR0H = 103; //9600 baudrate 
-  UBRR0H = 0; 
-  UCSR0C = 0b00000110; 
+  UBRR0L = 103; //set 9600 baudrate 
+  UBRR0H = 0; //b < 255 
+  UCSR0C = 0b00000110; //set 8N1 framework 
   UCSR0A = 0; 
 }
 
-// Start the serial connection. For now we are using
-// Arduino wiring and this function is empty. We will
-// replace this later with bare-metal code.
+
 
 void startSerial()
 {
-    UCSR0B = 0b11000; 
+  
+  UCSR0B = 0b00011000; // enable receiver and transmitter
+  
 }
 
-// Read the serial port. Returns the read character in
-// ch if available. Also returns TRUE if ch is valid. 
-// This will be replaced later with bare-metal code.
+
 
 int readSerial(char *buffer)
 {
 
-  int count=0;
-
-  while((UCSR0A & 0b100000) == 0)
-    buffer[count++] = UDR0;
-
-  return count;
+  int count = 0; 
+  while (UCSR0A & 0b10000000) { 
+    unsigned char data = UDR0; 
+    count += 1;
+    buffer[count] = data; 
+  } 
+  return count; 
 }
 
-// Write to the serial port. Replaced later with
-// bare-metal code
+
 
 void writeSerial(const char *buffer, int len)
 {
-  int count=0;
-  while(count<len) {
-    while( (UCSR0A & 0b100000) == 0){
-      UDR0 = buffer[count];
-      count++;
-    }
-  }
+  int count = 0; 
+   while (count < len) { 
+    while ((UCSR0A & 0b00100000) == 0); 
+    UDR0 = buffer[count]; 
+    count += 1; 
+  } 
 }
 
 /*
@@ -452,28 +570,15 @@ void setupMotors()
    *    B1IN - Pin 10, PB2, OC1B
    *    B2In - pIN 11, PB3, OC2A
    */
-  TCNT0 = 0; // Timer 0 
-  TCNT1 = 0; // Timer 1 
-  TCNT2 = 0; // Timer 2 
-  DDRD |= (LF | LR);  
-  DDRB |= (RF | RR);  
-  TCCR0A |= 0b1;  
-  OCR0A = 0; 
-  OCR0B = 0; 
-  TCCR1A |= 0b1; 
-  OCR1A = 0; 
-  OCR1B = 0; 
-  TCCR2A |= 0b1; 
-  OCR2A = 0; 
-  OCR2B = 0; 
+   
 }
 
 // Start the PWM for Alex's motors.
+// We will implement this later. For now it is
+// blank.
 void startMotors()
 {
-  TCCR0B |= 0b11; // Start Timer 0 
-  TCCR1B |= 0b11; // Start Timer 1 
-  TCCR2B |= 0b100; // Start Timer 2  
+  
 }
 
 // Convert percentages to PWM values
@@ -497,8 +602,6 @@ void forward(float dist, float speed)
 {
   dir = FORWARD;
   int val = pwmVal(speed);
-  int adj_val = pwmVal(speed * RIGHT_ADJUST); 
-  // Prevents veering due to inbalanced motor power. Arbitrary number
   
   if(dist == 0) 
     deltaDist = 9999999; // dist=0 -> keep moving fwd
@@ -509,14 +612,12 @@ void forward(float dist, float speed)
 
   // LF = Left forward pin, LR = Left reverse pin
   // RF = Right forward pin, RR = Right reverse pin
-  // analogWrite(LF, val);
-  // analogWrite(RF, pwmVal(speed * RIGHT_ADJUST));
-  // analogWrite(LR,0);
-  // analogWrite(RR, 0);
-  OCR0A = val;
-  TCCR0A = 0b10000001; //RF 
-  OCR2A = adj_val; 
-  TCCR2A = 0b10000001;
+  // This will be replaced later with bare-metal code.
+  
+  analogWrite(LF, val);
+  analogWrite(RF, pwmVal(speed * RIGHT_ADJUST));
+  analogWrite(LR,0);
+  analogWrite(RR, 0);
 }
 
 // Reverse Alex "dist" cm at speed "speed".
@@ -529,8 +630,6 @@ void reverse(float dist, float speed)
 
   dir = BACKWARD;
   int val = pwmVal(speed);
-  int adj_val = pwmVal(speed * RIGHT_ADJUST); 
-  // Prevents veering due to inbalanced motor power. Arbitrary number
 
   if(dist == 0) 
     deltaDist = 9999999; // dist=0 -> keep moving fwd
@@ -541,16 +640,11 @@ void reverse(float dist, float speed)
   // LF = Left forward pin, LR = Left reverse pin
   // RF = Right forward pin, RR = Right reverse pin
   // This will be replaced later with bare-metal code.
-  // analogWrite(LR, val);
-  // analogWrite(RR, pwmVal(speed * RIGHT_ADJUST));
-  // analogWrite(LF, 0);
-  // analogWrite(RF, 0);
-
-
-  OCR0B = val; 
-  TCCR0A = 0b00100001; // LR 
-  OCR1B = adj_val; 
-  TCCR1A = 0b00100001; // RR
+  analogWrite(LR, val);
+  //analogWrite(RR, val);
+  analogWrite(RR, pwmVal(speed * RIGHT_ADJUST));
+  analogWrite(LF, 0);
+  analogWrite(RF, 0);
 }
 
 int computeDeltaTicks(float ang) {
@@ -581,21 +675,15 @@ void left(float ang, float speed)
 
   dir = LEFT;
   int val = pwmVal(speed);
-  int adj_val = pwmVal(speed * RIGHT_ADJUST); 
-  // Prevents veering due to inbalanced motor power. Arbitrary number
 
   // For now we will ignore ang. We will fix this in Week 9.
   // We will also replace this code with bare-metal later.
   // To turn left we reverse the left wheel and move
   // the right wheel forward.
-  // analogWrite(LR, val);
-  // analogWrite(RF, pwmVal(speed*RIGHT_ADJUST));
-  // analogWrite(LF, 0);
-  // analogWrite(RR, 0);
-  OCR0B = val; 
-  TCCR0A = 0b00100001; // LR 
-  OCR2A = adj_val; 
-  TCCR2A = 0b10000001; // RF 
+  analogWrite(LR, val);
+  analogWrite(RF, pwmVal(speed*RIGHT_ADJUST));
+  analogWrite(LF, 0);
+  analogWrite(RR, 0);
 }
 
 // Turn Alex right "ang" degrees at speed "speed".
@@ -613,35 +701,26 @@ void right(float ang, float speed)
   targetTicks = rightReverseTicksTurns + deltaTicks;
   dir = RIGHT;
   int val = pwmVal(speed);
-  int adj_val = pwmVal(speed * RIGHT_ADJUST); 
-  // Prevents veering due to inbalanced motor power. Arbitrary number
 
   // For now we will ignore ang. We will fix this in Week 9.
   // We will also replace this code with bare-metal later.
   // To turn right we reverse the right wheel and move
   // the left wheel forward.
-  // analogWrite(RR, pwmVal(speed*RIGHT_ADJUST));
-  // analogWrite(LF, val);
-  // analogWrite(LR, 0);
-  // analogWrite(RF, 0);
-  OCR0A = val; 
-  TCCR0A = 0b10000001; // LF 
-  OCR1B = adj_val; 
-  TCCR1A = 0b00100001; // RR 
+  analogWrite(RR, pwmVal(speed*RIGHT_ADJUST));
+  analogWrite(LF, val);
+  analogWrite(LR, 0);
+  analogWrite(RF, 0);
 }
 
-// Stop Alex 
+// Stop Alex. To replace with bare-metal code later.
 void stop()
 {
 
   dir = STOP;
-  // analogWrite(LF, 0);
-  // analogWrite(LR, 0);
-  // analogWrite(RF, 0);
-  // analogWrite(RR, 0);
-  TCCR0A = 0b1; 
-  TCCR1A = 0b1; 
-  TCCR2A = 0b1; 
+  analogWrite(LF, 0);
+  analogWrite(LR, 0);
+  analogWrite(RF, 0);
+  analogWrite(RR, 0);
 }
 
 /*
@@ -809,12 +888,57 @@ void handlePacket(TPacket *packet)
 }
 
 
+void GetColors()  
+{    
+  PortD &= 0b0110;                                           //pin 9 12 levels define which set of photodiodes we are using LOW/LOW is for RED LOW/HIGH is for Blue and HIGH/HIGH is for green 
+  Red = pulseIn(out, digitalRead(out) == HIGH ? LOW : HIGH);       //here we wait until "out" go LOW, we start measuring the duration and stops when "out" is HIGH again, if you have trouble with this expression check the bottom of the code
+  delay(20);  
+  PortD |= 0b1000;                                       //Here we select the other color (set of photodiodes) and measure the other colors value using the same techinque
+  Blue = pulseIn(out, digitalRead(out) == HIGH ? LOW : HIGH);
+  delay(20);  
+  PortD |= 0b0001;  
+  Green = pulseIn(out, digitalRead(out) == HIGH ? LOW : HIGH);
+  delay(20);  
+}
+
+int ultrasonic_sensor_update() {
+  digitalWrite(trigerPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigerPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigerPin, LOW);
+
+  duration = pulseIn(echoPin, HIGH);
+  distance = (duration*0.0343)/2;
+}
+
+void colour_ultrasonic_sensor() {
+  GetColors();
+
+  Red = map(Red,110,1450,0,255);
+  Green = map(Green,100,1350,0,255);
+  Blue = map(Blue,75,1030,0,255);
+
+  
+  if (Red>33 && Red<43 && Green>16 && Green<26 && Blue>40 && Blue<50){ 
+    colour = 'g';
+  }
+  else if (Red<10 && Green>39 && Green<55 && Blue>37 && Blue<50){
+    colour = 'r';
+  }
+  else{
+    colour = 'u';
+  }
+
+  ultrasonic_sensor_update();
+  delay(100);
+}
 
 void loop() {
   // Stopping function
   ultrasonic_sensor_update();
   if(deltaDist > 0 || distance <= 2) {
-    if(distance <= 2) { PORTC |= BUZZER; } // sound the buzzer
+    if(distance <= 2) { digitalWrite(A2, HIGH); } // sound the buzzer
     if(dir == FORWARD || dir == BACKWARD || dir == STOP) {
       int linear_dist = dir == FORWARD ? forwardDist : reverseDist;
       if(dir == STOP || linear_dist > newDist) {
@@ -823,7 +947,7 @@ void loop() {
         stop();
       } 
     }
-    if(distance <= 2) { delay(1000); PORTC &= ~BUZZER; } // stop the buzzer
+    if(distance <= 2) { delay(1000); digitalWrite(A2, LOW); } // stop the buzzer
   }
 
   // Stopping function
